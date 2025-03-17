@@ -1,0 +1,15 @@
+[tool.poetry]
+name = "soauth"
+version = "0.1.0"
+description = "A set of development workflows for easy acquisition of OAuth2 tokens"
+authors = ["Piotr Kilczuk <piotr@kilczuk.dev>"]
+license = "MIT"
+readme = "README.md"
+
+[tool.poetry.dependencies]
+python = "^3.12"
+
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
