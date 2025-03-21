@@ -1,8 +1,8 @@
 import logging
 
-from soauth.background_server import run_werkzeug_server
+from soauth.background_server import BackgroundServer
 
 
 def main():
     logging.basicConfig(level=logging.DEBUG)
-    run_werkzeug_server()
+    BackgroundServer()
