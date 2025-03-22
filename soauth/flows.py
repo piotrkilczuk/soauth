@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from typing import Type
+import copy
+from typing import Type, Any
 from urllib.parse import urlencode
+import uuid
 
+import requests
 from werkzeug import Response
 from werkzeug.utils import redirect
 from wtforms.fields.choices import SelectField
@@ -13,26 +16,47 @@ from wtforms.validators import InputRequired, StopValidation
 
 class BaseFlow:
     redirect_to_consent_screen_url: str
+    acquire_tokens_url: str
     form: Type[Form]
     name: str
+    state: dict[str, dict[str, Any]]
 
     port: int
 
     def __init__(self, port: int):
         self.port = port
+        self.state = {}
 
     def collect_consent_screen_args(self, form: Form) -> dict:
+        state_uuid = uuid.uuid4().hex
         form_data = form.data
-        form_data.update({"redirect_uri": self.get_redirect_uri()})
+        form_data.update({"redirect_uri": self.get_redirect_uri(), "state": state_uuid})
+        self.state[state_uuid] = copy.copy(form_data)
+        form_data.pop("client_secret")
         return form_data
 
     def get_redirect_uri(self) -> str:
         return f"http://localhost:{self.port}/{self.name}/callback"
 
+    # def get_success_uri(self) -> str:
+    #     return f"http://localhost:{self.port}/{self.name}/success"
+
     def redirect_to_consent_screen(self, consent_screen_args: dict) -> Response:
         url = self.redirect_to_consent_screen_url
         qs = urlencode(consent_screen_args)
         return redirect(f"{url}?{qs}")
+
+    def acquire_tokens(self, code: str, state_uuid: str) -> dict:
+        state = self.state[state_uuid]
+        args = {
+            "client_id": state["client_id"],
+            "client_secret": state["client_secret"],
+            "code": code,
+            "grant_type": "authorization_code",
+            "redirect_uri": self.get_redirect_uri(),
+        }
+        response = requests.post(self.acquire_tokens_url, data=args)
+        return response.json()
 
 
 class GoogleAPIScopeValidator:
@@ -436,6 +460,7 @@ class GoogleAPIForm(Form):
 
 class GoogleAPI(BaseFlow):
     redirect_to_consent_screen_url = "https://accounts.google.com/o/oauth2/v2/auth"
+    acquire_tokens_url = "https://oauth2.googleapis.com/token"
     form = GoogleAPIForm
     name = "google"
 

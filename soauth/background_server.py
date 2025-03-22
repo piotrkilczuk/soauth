@@ -10,7 +10,7 @@ import webbrowser
 
 from jinja2 import Environment, FileSystemLoader
 from werkzeug import Request, Response
-from werkzeug.exceptions import HTTPException, NotFound
+from werkzeug.exceptions import HTTPException, NotFound, BadRequest
 from werkzeug.routing import Map, Rule
 from werkzeug.serving import make_server
 
@@ -59,7 +59,10 @@ class WSGIApp:
 
     def callback(self, request: Request, flow_name: str) -> dict:
         flow = self.instantiate_flow(flow_name)
-        raise NotImplementedError(request.args, flow_name)
+        if "code" not in request.args:
+            raise BadRequest("No code provided")
+        tokens = flow.acquire_tokens(request.args["code"], request.args["state"])
+        return {"tokens": tokens}
 
     def setup_flows(self):
         self.flows = {"google": GoogleAPI(self.port)}
