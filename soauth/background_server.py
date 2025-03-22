@@ -10,11 +10,12 @@ import webbrowser
 
 from jinja2 import Environment, FileSystemLoader
 from werkzeug import Request, Response
-from werkzeug.exceptions import HTTPException
+from werkzeug.exceptions import HTTPException, NotFound
 from werkzeug.routing import Map, Rule
 from werkzeug.serving import make_server
 
 from soauth.const import PATHS
+from soauth.flows import BaseFlow, GoogleAPI
 
 logger = logging.getLogger(__name__)
 
@@ -23,21 +24,54 @@ class QueueMessage(StrEnum):
     SHUTDOWN = "shutdown"
 
 
-class ApplicationFlow:
+class WSGIApp:
     queue: Queue
     url_map: Map
     jinja_env: Environment
+    flows: dict[str, BaseFlow]
+    port: int
 
-    def __init__(self, queue: Queue):
+    def __init__(self, queue: Queue, port: int):
         self.queue = queue
+        self.port = port
+        self.setup_flows()
         self.setup_urls()
         self.setup_jinja2()
 
     def index(self, request: Request) -> dict:
         return {}
 
+    def instantiate_flow(self, flow_name: str) -> BaseFlow:
+        flow = self.flows.get(flow_name)
+        if not flow:
+            raise NotFound(f"Flow {flow_name} not found")
+        return flow
+
+    def collect_secrets_and_scopes(
+        self, request: Request, flow_name: str
+    ) -> dict | Response:
+        flow = self.instantiate_flow(flow_name)
+        form = flow.form(request.form)
+        if request.method == "POST" and form.validate():
+            consent_screen_args = flow.collect_consent_screen_args(form)
+            return flow.redirect_to_consent_screen(consent_screen_args)
+        return {"form": form}
+
+    def callback(self, request: Request, flow_name: str) -> dict:
+        flow = self.instantiate_flow(flow_name)
+        raise NotImplementedError(request.args, flow_name)
+
+    def setup_flows(self):
+        self.flows = {"google": GoogleAPI(self.port)}
+
     def setup_urls(self):
-        self.url_map = Map([Rule("/", endpoint=self.index)])
+        self.url_map = Map(
+            [
+                Rule("/", endpoint=self.index),
+                Rule("/<flow_name>/", endpoint=self.collect_secrets_and_scopes),
+                Rule("/<flow_name>/callback/", endpoint=self.callback),
+            ]
+        )
 
     def setup_jinja2(self):
         self.jinja_env = Environment(
@@ -52,15 +86,13 @@ class ApplicationFlow:
         adapter = self.url_map.bind_to_environ(request.environ)
         try:
             endpoint, values = adapter.match()
-            context = endpoint(request, **values)
+            context_or_response = endpoint(request, **values)
+            if isinstance(context_or_response, Response):
+                return context_or_response
             template = self.jinja_env.get_template(f"{endpoint.__name__}.html")
-            return Response(template.render(context), mimetype="text/html")
+            return Response(template.render(context_or_response), mimetype="text/html")
         except HTTPException as e:
             return e
-
-    # def dispatch_request(self, request: Request) -> Response:
-    #     self.queue.put(QueueMessage.SHUTDOWN)
-    #     return Response("Hello world")
 
     def wsgi_app(self, environ: dict, start_response: Callable) -> Iterable[bytes]:
         request = Request(environ)
@@ -72,7 +104,7 @@ class ApplicationFlow:
 
 
 class BackgroundServer:
-    app: ApplicationFlow
+    app: WSGIApp
     port: int
     queue: Queue
     werkzeug_process: Process
@@ -80,7 +112,7 @@ class BackgroundServer:
     def __init__(self):
         self.port = self.allocate_free_port()
         self.queue = Queue()
-        self.app = self.setup_werkzeug_app(self.queue)
+        self.app = self.setup_werkzeug_app(self.queue, self.port)
         self.start()
         self.read_queue()
 
@@ -94,11 +126,11 @@ class BackgroundServer:
             logger.info("Allocating free port: %d", port)
             return port
 
-    def setup_werkzeug_app(self, queue: Queue) -> ApplicationFlow:
+    def setup_werkzeug_app(self, queue: Queue, port: int) -> WSGIApp:
         """
         Sets up the Werkzeug application. This should inherit from ApplicationFlow.
         """
-        app = ApplicationFlow(queue)
+        app = WSGIApp(queue, port)
         return app
 
     def werkzeug_subprocess_worker(self):
