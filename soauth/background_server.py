@@ -5,6 +5,7 @@ import logging
 from multiprocessing.context import Process
 from multiprocessing import Queue
 import socket
+import time
 from typing import Callable, Iterable
 import webbrowser
 
@@ -62,6 +63,7 @@ class WSGIApp:
         if "code" not in request.args:
             raise BadRequest("No code provided")
         tokens = flow.acquire_tokens(request.args["code"], request.args["state"])
+        self.queue.put(QueueMessage.SHUTDOWN)
         return {"tokens": tokens}
 
     def setup_flows(self):
@@ -153,8 +155,10 @@ class BackgroundServer:
         """
         while True:
             message = self.queue.get()
-            logging.debug("Received from queue: %s", message)
+            logger.debug("Received from queue: %s", message)
             if message is QueueMessage.SHUTDOWN:
+                logger.debug("Received shutdown message. Will terminate server in 5.")
+                time.sleep(5)
                 return self.terminate()
 
     def start(self):

@@ -3,15 +3,8 @@
 {% block content %}
   <p class="text-center text-secondary">OAuth2 Token Response:</p>
   <div class="d-flex justify-content-center">
-    <table class="table">
-      <tbody>
-        {% for key, value in tokens.items() %}
-        <tr>
-          <th scope="row">{{ key }}</th>
-          <td>{{ value }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
+    <pre>
+{{ tokens|tojson(indent=4) }}
+    </pre>
   </div>
 {% endblock %}
